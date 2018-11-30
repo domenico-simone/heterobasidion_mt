@@ -3,7 +3,9 @@ import os, re
 
 # fields: sample  ref_genome_mt   ref_genome_n
 analysis_tab = pd.read_table("data/analysis.tab", sep = "\t", comment='#')
+#print(analysis_tab)
 reference_tab = pd.read_table("data/reference_genomes.tab", sep = "\t", comment='#').set_index("ref_genome_mt", drop=False)
+#print(reference_tab)
 
 configfile: "config.yaml"
 res_dir = config["results"]
@@ -23,6 +25,9 @@ def get_genome_files(df, ref_genome_mt, field):
     return expand(df.loc[ref_genome_mt, field])
 
 def get_mt_genomes(df):
+    # print("list")
+    # print(list(set(analysis_tab['ref_genome_mt'])))
+    # print("EOL")
     return list(set(analysis_tab['ref_genome_mt']))
 
 def get_other_fields(df, ref_genome_mt, field):
@@ -123,7 +128,7 @@ def filter_alignments(outmt, outS, outP, OUT, gsnap_db = None):
 #     return read_file[0]
 
 #def gsnap_inputs(wildcards, read_type):
-def gsnap_inputs(sample, read_type):
+def get_read_file_inputs(sample, read_type):
     # https://stackoverflow.com/questions/6930982/how-to-use-a-variable-inside-a-regular-expression
     #print(wildcards.sample)
     #read_file_regex = re.escape(wildcards.sample) + r'_[\D]{6}_L001_R' + read_type + r'_001.fastq.gz'
@@ -131,7 +136,7 @@ def gsnap_inputs(sample, read_type):
     read_file = [f for f in os.listdir('./data/reads/') if re.match(read_file_regex, f)]
     if len(read_file) > 1:
         sys.exit("Ambiguous name in read files.")
-    return './data/reads/' + read_file[0]
+    return 'data/reads/' + read_file[0]
 
 # def filtering_reads_input():
 #     if (seq_type == "pe"):
@@ -146,200 +151,233 @@ def gsnap_inputs(sample, read_type):
 
 seq_type = "pe"
 
-#outpaths = get_out_files(analysis_tab, res_dir = "results", map_dir = "map")
-outpaths = get_mt_genomes(analysis_tab)
+wildcard_constraints:
+    # no slash in sample and ref_genome_mt wildcards
+    #sample = "^[^/]*$",
+    sample = "^\S[^/]*\S",
+    #sample = '([^/]+)/?(.*)$',
+    ref_genome_n = "^\S[^/]*\S",
+    ref_genome_mt = "^\S[^/]*\S"
 
-target_inputs = [
-    outpaths ]
+#outpaths = get_out_files(analysis_tab, res_dir = "results", map_dir = "map")
+# outpaths = get_mt_genomes(analysis_tab)
+# #print(outpaths)
+# 
+# target_inputs = [
+#     outpaths ]
 
 rule all:
     input:
         expand("results/vcf/{ref_genome_mt}.vcf", ref_genome_mt = get_mt_genomes(analysis_tab))
 
-
-#"results/vcf/{ref_genome_mt}.vcf"
-# rule all:
+# rule make_mt_gmap_db:
 #     input:
-#         target_inputs,
-#         #all_VCF = expand("results/vcf/{ref_genome_mt}.vcf", ref_genome_mt = get_mt_genomes(analysis_tab))
-
-rule make_mt_gmap_db:
-    input:
-        #mt_genome_fasta = "data/genomes/{ref_genome_mt}.fasta",
-        mt_genome_fasta = lambda wildcards: expand("data/genomes/{ref_genome_mt_file}", \
-                            ref_genome_mt_file = get_genome_files(reference_tab, wildcards.ref_genome_mt, "ref_genome_mt_file"))
-    output:
-        gmap_db = gmap_db_dir + "/{ref_genome_mt}/{ref_genome_mt}.ref081locoffsets64strm"
-    params:
-        gmap_db_dir = config["map"]["gmap_db_dir"],
-        #gsnap_db_folder = config['map']['gsnap_db_folder'],
-        gmap_db = lambda wildcards, output: os.path.split(output.gmap_db)[1].split(".")[0]
-    shell:
-        """
-        gmap_build -D {params.gmap_db_dir} -d {params.gmap_db} -g $nfasta_rcrs -s numeric-alpha -k $kmer
-        """
-
-rule make_mt_n_gmap_db:
-    input:
-        mt_genome_fasta = "data/genomes/{ref_genome_mt}.fasta",
-        n_genome_fasta = "data/genomes/{ref_genome_n}.fasta"
-    output:
-        gmap_db = gmap_db_dir + "/{ref_genome_mt}_{ref_genome_n}/{ref_genome_mt}_{ref_genome_n}.ref081locoffsets64strm"
-    shell:
-        """
-        gmap_build -D $gmap_db -d $database_name_nfasta_rcrs -g $nfasta_rcrs -s numeric-alpha -k $kmer
-        """
-#
-rule map_MT_PE_SE:
-    input:
-        #gsnap_inputs,
-        #R1 = "data/reads/{sample}.R1.fastq.gz",
-        # R1 = gsnap_inputs(),
-        # R2 = gsnap_inputs(),
-        R1 = lambda wildcards: gsnap_inputs("{sample}".format(sample=wildcards.sample), "1"),
-        R2 = lambda wildcards: gsnap_inputs("{sample}".format(sample=wildcards.sample), "2"),
-        # R2 = "data/reads/{sample}.R2.fastq.gz",
-        # SE = "data/reads/{sample}.fastq.gz",
-        gmap_db = gmap_db_dir + "/{ref_genome_mt}/{ref_genome_mt}.ref081locoffsets64strm"
-        #index=gsnap_index
-    output:
-        outmt_sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/outmt.sam"
-    params:
-        gmap_db_dir = config["map"]["gmap_db_dir"],
-        #gsnap_db_folder = config['map']['gsnap_db_folder'],
-        gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0],
-        # gsnap_db_folder = config['map_exome']['gsnap_db_folder'],
-        # gsnap_db = config['map_exome']['gsnap_mt_db'],
-        RG_tag = '--read-group-id=sample --read-group-name=sample --read-group-library=sample --read-group-platform=sample'
-    log:
-        log_dir + "/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/" + map_dir + "/logmt.txt"
-    threads:
-        config["map"]["gmap_threads"]
-    run:
-        if seq_type == "pe":
-            print("PE mode")
-            shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} {input[1]} > {output.outmt_sam} 2> {log}")
-        if seq_type == "se":
-            print("SE mode")
-            shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} > {output.outmt_sam} 2> {log}")
-        elif seq_type == "both":
-            print("PE + SE mode")
-            shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} {input[1]} {input[2]} > {output.outmt_sam} 2> {log}")
-
-rule sam2fastq:
-    input:
-        outmt_sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt.sam"
-    output:
-        outmt1 = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt1.fastq",
-        outmt2 = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt2.fastq",
-        outmt = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt.fastq"
-    # version:
-    #     subprocess.getoutput(
-    #         "picard SamToFastq --version"
-    #         )
-    # message:
-    #     "Converting SAM files to FASTQ with PicardTools v{version}"
-    shell:
-        """
-        picard SamToFastq \
-            I={input.outmt_sam} \
-            FASTQ={output.outmt1} \
-            SECOND_END_FASTQ={output.outmt2} \
-            UNPAIRED_FASTQ={output.outmt}
-        """
-
-rule map_nuclear_MT_SE:
-    input:
-        outmt = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt.fastq",
-        gmap_db = gmap_db_dir + "/{ref_genome_mt}_{ref_genome_n}/{ref_genome_mt}_{ref_genome_n}.ref081locoffsets64strm"
-    output:
-        outS = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outS.sam"
-    params:
-        gmap_db_dir = config["map"]["gmap_db_dir"],
-        #gsnap_db_folder = config['map']['gsnap_db_folder'],
-        gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0]
-        #gsnap_db = config['map']['gsnap_n_mt_db']
-    threads:
-        config["map"]["gmap_threads"]
-    # version:
-    #     subprocess.getoutput(
-    #       gsnap --version
-    #       )
-    #     """
-    log:
-        logS = log_dir + "/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/logS.sam"
-    message:
-        "Mapping onto complete human genome (nuclear + mt)... SE reads"
-    shell:
-        """
-        touch {output}
-        #gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --nofails --query-unk-mismatch=1 -O -t {threads} {input.outmt} > {output.outS} 2> {log.logS}
-        """
-
-rule map_nuclear_MT_PE:
-    input:
-        outmt1 = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt1.fastq",
-        outmt2 = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt2.fastq",
-        gmap_db = gmap_db_dir + "/{ref_genome_mt}_{ref_genome_n}/{ref_genome_mt}_{ref_genome_n}.ref081locoffsets64strm"
-    output:
-        outP = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outP.sam"
-    params:
-        gmap_db_dir = config["map"]["gmap_db_dir"],
-        #gsnap_db_folder = config['map']['gsnap_db_folder'],
-        gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0]
-        #gsnap_db = config['map']['gsnap_n_mt_db']
-    threads:
-        config["map"]["gmap_threads"]
-    # version:
-    #     subprocess.getoutput(
-    #       gsnap --version
-    #       )
-    #     """
-    log:
-        logP = log_dir + "/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/logP.sam"
-    message:
-        "Mapping onto complete human genome (nuclear + mt)... PE reads"
-    shell:
-        """
-        touch {output}
-        #gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --nofails --query-unk-mismatch=1 -O -t {threads} {input.outmt1} {input.outmt2} > {output.outP} 2> {log.logP}
-        """
-
-rule filtering_mt_alignments:
-    input:
-        outmt = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outmt.sam",
-        outS = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outS.sam",
-        outP = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/outP.sam"
-    output:
-        sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/OUT.sam"
-        #sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/OUT.sam"
-    params:
-        outdir = lambda wildcards, output: os.path.split(output.sam)[0]
-    run:
-        filter_alignments(input.outmt, \
-                          input.outhumanS, \
-                          input.outhumanP, \
-                          output.sam, \
-                          gsnap_db = {params.gsnap_db})
-
-rule make_single_VCF:
-    input:
-        sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/OUT.sam"
-    output:
-        single_vcf = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/vcf.vcf"
-    shell:
-        """
-        """
+#         #mt_genome_fasta = "data/genomes/{ref_genome_mt}.fasta",
+#         #mt_genome_fasta = lambda wildcards: expand("data/genomes/{ref_genome_mt_file}", \
+#         #                    ref_genome_mt_file = get_genome_files(reference_tab, wildcards.ref_genome_mt, "ref_genome_mt_file"))
+#         mt_genome_fasta = lambda wildcards: "data/genomes/{}".format(get_genome_files(reference_tab, wildcards.ref_genome_mt, "ref_genome_mt_file"))
+#     output:
+#         gmap_db = gmap_db_dir + "/{ref_genome_mt}/{ref_genome_mt}.ref081locoffsets64strm"
+#     params:
+#         gmap_db_dir = config["map"]["gmap_db_dir"],
+#         #gsnap_db_folder = config['map']['gsnap_db_folder'],
+#         gmap_db = lambda wildcards, output: os.path.split(output.gmap_db)[1].split(".")[0]
+#     shell:
+#         """
+#         gmap_build -D {params.gmap_db_dir} -d {params.gmap_db} -g $nfasta_rcrs -s numeric-alpha -k $kmer
+#         """
+# 
+# rule make_mt_n_gmap_db:
+#     input:
+#         mt_genome_fasta = lambda wildcards: "data/genomes/{}".format(get_genome_files(reference_tab, wildcards.ref_genome_mt, "ref_genome_mt_file")),
+#         n_genome_fasta = lambda wildcards: "data/genomes/{}".format(get_genome_files(reference_tab, wildcards.ref_genome_mt, "ref_genome_n_file")),
+#     output:
+#         gmap_db = gmap_db_dir + "/{ref_genome_mt}.{ref_genome_n}/{ref_genome_mt}.{ref_genome_n}.ref081locoffsets64strm"
+#     shell:
+#         """
+#         gmap_build -D $gmap_db -d $database_name_nfasta_rcrs -g $nfasta_rcrs -s numeric-alpha -k $kmer
+#         """
+# 
+# rule map_MT_PE_SE:
+#     input:
+#         #gsnap_inputs,
+#         #R1 = "data/reads/{sample}.R1.fastq.gz",
+#         # R1 = gsnap_inputs(),
+#         # R2 = gsnap_inputs(),
+#         R1 = lambda wildcards: get_read_file_inputs("{sample}".format(sample=wildcards.sample), "1"),
+#         R2 = lambda wildcards: get_read_file_inputs("{sample}".format(sample=wildcards.sample), "2"),
+#         # R2 = "data/reads/{sample}.R2.fastq.gz",
+#         # SE = "data/reads/{sample}.fastq.gz",
+#         gmap_db = gmap_db_dir + "/{ref_genome_mt}/{ref_genome_mt}.ref081locoffsets64strm"
+#         #index=gsnap_index
+#     output:
+#         outmt_sam = "results/{sample}/{ref_genome_mt}/outmt.sam"
+#     params:
+#         gmap_db_dir = config["map"]["gmap_db_dir"],
+#         #gsnap_db_folder = config['map']['gsnap_db_folder'],
+#         gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0],
+#         # gsnap_db_folder = config['map_exome']['gsnap_db_folder'],
+#         # gsnap_db = config['map_exome']['gsnap_mt_db'],
+#         RG_tag = '--read-group-id=sample --read-group-name=sample --read-group-library=sample --read-group-platform=sample'
+#     log:
+#         log_dir + "/{sample}/{ref_genome_mt}/" + map_dir + "/logmt.txt"
+#     threads:
+#         config["map"]["gmap_threads"]
+#     run:
+#         if seq_type == "pe":
+#             print("PE mode")
+#             shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} {input[1]} > {output.outmt_sam} 2> {log}")
+#         if seq_type == "se":
+#             print("SE mode")
+#             shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} > {output.outmt_sam} 2> {log}")
+#         elif seq_type == "both":
+#             print("PE + SE mode")
+#             shell("gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --gunzip --nofails --pairmax-dna=500 --query-unk-mismatch=1 {params.RG_tag} -n 1 -Q -O -t {threads} {input[0]} {input[1]} {input[2]} > {output.outmt_sam} 2> {log}")
+# 
+# rule sam2fastq:
+#     input:
+#         outmt_sam = "results/{sample}/{ref_genome_mt}/map/outmt.sam"
+#     output:
+#         outmt1 = "results/{sample}/{ref_genome_mt}/map/outmt1.fastq",
+#         outmt2 = "results/{sample}/{ref_genome_mt}/map/outmt2.fastq",
+#         outmt = "results/{sample}/{ref_genome_mt}/map/outmt.fastq"
+#     # version:
+#     #     subprocess.getoutput(
+#     #         "picard SamToFastq --version"
+#     #         )
+#     # message:
+#     #     "Converting SAM files to FASTQ with PicardTools v{version}"
+#     shell:
+#         """
+#         picard SamToFastq \
+#             I={input.outmt_sam} \
+#             FASTQ={output.outmt1} \
+#             SECOND_END_FASTQ={output.outmt2} \
+#             UNPAIRED_FASTQ={output.outmt}
+#         """
+# 
+# rule map_nuclear_MT_SE:
+#     input:
+#         outmt = "results/{sample}/{ref_genome_mt}/map/outmt.fastq",
+#         gmap_db = lambda wildcards: gmap_db_dir + "/{}.{}/{}.{}.ref081locoffsets64strm".format(wildcards.ref_genome_mt, \
+#                                                                                                 get_other_fields(reference_tab, wildcards.ref_genome_mt, "ref_genome_n"), \
+#                                                                                                 wildcards.ref_genome_mt, \
+#                                                                                                 get_other_fields(reference_tab, wildcards.ref_genome_mt, "ref_genome_n"))
+#         #gmap_db = gmap_db_dir + "/{ref_genome_mt}.{ref_genome_n}/{ref_genome_mt}.{ref_genome_n}.ref081locoffsets64strm"
+#     output:
+#         outS = "results/{sample}/{ref_genome_mt}/map/outS.sam"
+#     params:
+#         gmap_db_dir = config["map"]["gmap_db_dir"],
+#         #gsnap_db_folder = config['map']['gsnap_db_folder'],
+#         gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0]
+#         #gsnap_db = config['map']['gsnap_n_mt_db']
+#     threads:
+#         config["map"]["gmap_threads"]
+#     # version:
+#     #     subprocess.getoutput(
+#     #       gsnap --version
+#     #       )
+#     #     """
+#     log:
+#         logS = log_dir + "/{sample}/{ref_genome_mt}/logS.sam"
+#     message:
+#         "Mapping onto complete human genome (nuclear + mt)... SE reads"
+#     shell:
+#         """
+#         touch {output}
+#         #gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --nofails --query-unk-mismatch=1 -O -t {threads} {input.outmt} > {output.outS} 2> {log.logS}
+#         """
+# 
+# rule map_nuclear_MT_PE:
+#     input:
+#         outmt1 = "results/{sample}/{ref_genome_mt}/map/outmt1.fastq",
+#         outmt2 = "results/{sample}/{ref_genome_mt}/map/outmt2.fastq",
+#         gmap_db = lambda wildcards: gmap_db_dir + "/{}.{}/{}.{}.ref081locoffsets64strm".format(wildcards.ref_genome_mt, \
+#                                                                                                 get_other_fields(reference_tab, wildcards.ref_genome_mt, "ref_genome_n"), \
+#                                                                                                 wildcards.ref_genome_mt, \
+#                                                                                                 get_other_fields(reference_tab, wildcards.ref_genome_mt, "ref_genome_n"))
+#         #gmap_db = gmap_db_dir + "/{ref_genome_mt}.{ref_genome_n}/{ref_genome_mt}.{ref_genome_n}.ref081locoffsets64strm"
+#     output:
+#         outP = "results/{sample}/{ref_genome_mt}/map/outP.sam"
+#     params:
+#         gmap_db_dir = config["map"]["gmap_db_dir"],
+#         #gsnap_db_folder = config['map']['gsnap_db_folder'],
+#         gmap_db = lambda wildcards, input: os.path.split(input.gmap_db)[1].split(".")[0]
+#         #gsnap_db = config['map']['gsnap_n_mt_db']
+#     threads:
+#         config["map"]["gmap_threads"]
+#     # version:
+#     #     subprocess.getoutput(
+#     #       gsnap --version
+#     #       )
+#     #     """
+#     log:
+#         logP = log_dir + "/{sample}/{ref_genome_mt}/logP.sam"
+#     message:
+#         "Mapping onto complete human genome (nuclear + mt)... PE reads"
+#     shell:
+#         """
+#         touch {output}
+#         #gsnap -D {params.gmap_db_dir} -d {params.gmap_db} -A sam --nofails --query-unk-mismatch=1 -O -t {threads} {input.outmt1} {input.outmt2} > {output.outP} 2> {log.logP}
+#         """
+# 
+# rule filtering_mt_alignments:
+#     input:
+#         outmt = "results/{sample}/{ref_genome_mt}/map/outmt.sam",
+#         outS = "results/{sample}/{ref_genome_mt}/map/outS.sam",
+#         outP = "results/{sample}/{ref_genome_mt}/map/outP.sam"
+#     output:
+#         sam = "results/{sample}/{ref_genome_mt}/map/OUT.sam"
+#         #sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/OUT.sam"
+#     params:
+#         outdir = lambda wildcards, output: os.path.split(output.sam)[0]
+#     run:
+#         filter_alignments(input.outmt, \
+#                           input.outhumanS, \
+#                           input.outhumanP, \
+#                           output.sam, \
+#                           gsnap_db = {params.gsnap_db})
+# 
+# rule make_single_VCF:
+#     input:
+#         sam = "results/{sample}/{ref_genome_mt}/map/OUT.sam"
+#     output:
+#         single_vcf = "results/{sample}/{ref_genome_mt}/vcf.vcf"
+#     shell:
+#         """
+#         # do something
+#         """
+# 
+# # rule make_single_VCF:
+# #     input:
+# #         sam = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/map/OUT.sam"
+# #     output:
+# #         single_vcf = "results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/vcf.vcf"
+# #     shell:
+# #         """
+# #         """
 
 rule make_VCF:
     input:
-        single_vcf = lambda wildcards: expand("results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/vcf.vcf", \
+        single_vcf = lambda wildcards: expand("results/{sample}/{ref_genome_mt}/vcf.vcf", \
                         sample = get_other_fields(analysis_tab, wildcards.ref_genome_mt, "sample"), \
-                        ref_genome_mt = wildcards.ref_genome_mt, \
-                        ref_genome_n = get_other_fields(analysis_tab, wildcards.ref_genome_mt, "ref_genome_n"))
+                        ref_genome_mt = wildcards.ref_genome_mt)
     output:
         "results/vcf/{ref_genome_mt}.vcf"
     shell:
         """
         # do something
         """
+
+# rule make_VCF:
+#     input:
+#         single_vcf = lambda wildcards: expand("results/OUT_{sample}_{ref_genome_mt}_{ref_genome_n}/vcf.vcf", \
+#                         sample = get_other_fields(analysis_tab, wildcards.ref_genome_mt, "sample"), \
+#                         ref_genome_mt = wildcards.ref_genome_mt, \
+#                         ref_genome_n = get_other_fields(analysis_tab, wildcards.ref_genome_mt, "ref_genome_n"))
+#     output:
+#         "results/vcf/{ref_genome_mt}.vcf"
+#     shell:
+#         """
+#         # do something
+#         """
